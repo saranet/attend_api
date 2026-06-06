@@ -20,24 +20,33 @@ try {
     $deviceId = $data['deviceId'];
 
     // Query by email only — device check handled in PHP to support admin device reset
+    // Leave counts moved to a subquery to avoid ONLY_FULL_GROUP_BY errors
     $stmt = mysqli_prepare($link,
         "SELECT e.*,
                 d.title AS departmentName,
                 b.name  AS branchName,
                 se.schedule_id AS schedule,
                 s.wrokingDays, s.time_in, s.time_out,
-                COUNT(l.id)                                              AS totalLeaveBalance,
-                SUM(CASE WHEN l.status = 'Approved'  THEN 1 ELSE 0 END) AS totalLeaveApproved,
-                SUM(CASE WHEN l.status = 'Cancelled' THEN 1 ELSE 0 END) AS totalLeaveCancelled,
-                SUM(CASE WHEN l.status = 'Pending'   THEN 1 ELSE 0 END) AS totalLeavePending
+                COALESCE(lc.totalLeaveBalance,   0) AS totalLeaveBalance,
+                COALESCE(lc.totalLeaveApproved,  0) AS totalLeaveApproved,
+                COALESCE(lc.totalLeaveCancelled, 0) AS totalLeaveCancelled,
+                COALESCE(lc.totalLeavePending,   0) AS totalLeavePending
          FROM employees e
-         LEFT JOIN departments        d  ON d.id  = e.departmentID
-         LEFT JOIN branches           b  ON b.id  = e.Branch_id
+         LEFT JOIN departments        d  ON d.id      = e.departmentID
+         LEFT JOIN branches           b  ON b.id      = e.Branch_id
          LEFT JOIN schedule_employees se ON se.emp_id = e.id
-         LEFT JOIN schedules          s  ON s.id  = se.schedule_id
-         LEFT JOIN leaves             l  ON l.emp_id  = e.id
+         LEFT JOIN schedules          s  ON s.id      = se.schedule_id
+         LEFT JOIN (
+             SELECT emp_id,
+                    COUNT(id)                                              AS totalLeaveBalance,
+                    SUM(CASE WHEN status = 'Approved'  THEN 1 ELSE 0 END) AS totalLeaveApproved,
+                    SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) AS totalLeaveCancelled,
+                    SUM(CASE WHEN status = 'Pending'   THEN 1 ELSE 0 END) AS totalLeavePending
+             FROM leaves
+             GROUP BY emp_id
+         ) lc ON lc.emp_id = e.id
          WHERE e.email = ?
-         GROUP BY e.id");
+         LIMIT 1");
     mysqli_stmt_bind_param($stmt, 's', $email);
     mysqli_stmt_execute($stmt);
     $user = mysqli_stmt_get_result($stmt)->fetch_assoc();
